@@ -1,0 +1,70 @@
+#!/usr/bin/env node
+const path = require('path')
+const apmx = require('commander')
+const chalk = require('chalk')
+const $ = require('shelljs')
+const home = require('user-home')
+const fetch = require('node-fetch')
+const pathExists = require('path-exists')
+const update = require('update-notifier')
+const co = require('co')
+const pkg = require('./package')
+
+update({pkg}).notify()
+
+/**
+ * Home to download packages to
+ */
+const packageHome = path.join(home, '.apmx/packages')
+$.mkdir('-p', packageHome)
+
+/**
+ * Function to log error
+ */
+function error() {
+  const args = [].slice.call(arguments).map(val => chalk.red(val))
+  console.log.apply(this, args)
+}
+
+/**
+ * Shared action for `install` and `update`
+ */
+function action(name) {
+  co(function* () {
+    if (!name) {
+      return error('>> First specific a package to install')
+    }
+    const repo = yield fetch(`https://atom.io/api/packages/${name}`)
+      .then(data => {
+        if (data.status !== 200) {
+          throw new Error(data.statusText)
+        }
+        return data.json()
+      })
+    const gitUrl = `${repo.repository.url}.git`
+    $.cd(packageHome)
+    const packageFolder = path.join(packageHome, name)
+    if (pathExists.sync(packageFolder)) {
+      $.cd(packageFolder)
+      $.exec(`git pull --rebase`)
+    } else {
+      $.exec(`git clone ${gitUrl} ${name}`)
+      $.cd(packageFolder)
+    }
+    $.exec('npm install --registry https://registry.npm.taobao.org --verbose')
+    $.exec('apm link')
+    console.log(chalk.green('Done!'))
+  }).catch(err => error(err.message))
+}
+
+apmx.version(pkg.version)
+
+apmx
+  .command('install [name]')
+  .action(action)
+
+apmx
+  .command('update [name]')
+  .action(action)
+
+apmx.parse(process.argv)
